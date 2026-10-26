@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Manrope:wght@400;500;600;700;800&display=swap');
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --red: #c8102e;
+  --red-dark: #a40d24;
+  --red-glow: rgba(200, 16, 46, 0.35);
+  --bg: #0a0a0a;
+  --bg2: #111111;
+  --bg3: #181818;
+  --card: #141414;
+  --border: rgba(255, 255, 255, 0.07);
+  --text: #f0f0f0;
+  --muted: #888;
+  --white: #ffffff;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Manrope', sans-serif;
+  overflow-x: hidden;
+}
+
+button {
+  font-family: 'Manrope', sans-serif;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+section {
+  padding: 100px 8%;
+}
+
+h2.section-title {
+  font-size: 42px;
+  font-weight: 800;
+  text-align: center;
+  color: var(--white);
+  margin-bottom: 10px;
+}
+
+p.section-sub {
+  text-align: center;
+  color: var(--muted);
+  font-size: 16px;
+  margin-bottom: 60px;
+}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(40px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes floatY {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-12px); }
+}
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 10px var(--red-glow); }
+  50%       { box-shadow: 0 0 35px rgba(200,16,46,0.65); }
+}
+@keyframes gradientShift {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+.fade-up  { animation: fadeUp 0.8s ease forwards; }
+.float    { animation: floatY 4s ease-in-out infinite alternate; }
+.glow     { animation: pulseGlow 2.5s infinite; }
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--red); border-radius: 3px; }

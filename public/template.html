@@ -1,0 +1,1466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KJ Practical Record Generator</title>
+<script src="https://cdn.jsdelivr.net/npm/docx@9.0.0/build/index.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+  let uploadedDocxBuffer = null;
+  let uploadedDocxHtml   = null;
+
+  // ── Track whether parent has explicitly loaded a template ──
+  // Until a LOAD_TEMPLATE message arrives, updatePreview() will NOT
+  // post TEMPLATE_DATA up to the parent (avoids overwriting admin defaults on load).
+  let templateLoadedByParent = false;
+
+  window.addEventListener('message', async (event) => {
+    if (!event.data) return;
+
+    // ── 1. Parent uploads a .docx file for the practical content ──
+    if (event.data.type === 'DOCX_FILE') {
+      uploadedDocxBuffer = event.data.buffer;
+      if (typeof updatePreview === 'function') {
+        updatePreview();
+      } else {
+        window.addEventListener('load', () => updatePreview());
+      }
+    }
+
+    // ── 2. Parent triggers DOCX download ──
+    if (event.data.type === 'TRIGGER_DOCX') {
+      if (typeof generateDOCX === 'function') {
+        await generateDOCX();
+      }
+    }
+
+    // ── 3. Parent requests current form values ──
+    if (event.data.type === 'REQUEST_FORM_DATA') {
+      window.parent.postMessage({
+        type: 'TEMPLATE_DATA',
+        payload: collectFormData()
+      }, '*');
+    }
+
+    // ── 4. Parent restores previously saved form state ──
+    if (event.data.type === 'RESTORE_FORM') {
+      const d = event.data.data;
+      if (!d) return;
+      applyFormData(d);
+      if (typeof updatePreview === 'function') updatePreview();
+    }
+
+    // ── 5. FIX: Parent loads a template (subject switch, e.g. ML → JAVA) ──
+    // This was completely missing before — silently ignored all template loads.
+    if (event.data.type === 'LOAD_TEMPLATE') {
+      // Dashboard.jsx sends { type:'LOAD_TEMPLATE', template: obj }
+      // Other callers may send payload or data — support all three
+      const d = event.data.template || event.data.payload || event.data.data || {};
+      templateLoadedByParent = true;
+      applyFormData(d);
+      if (typeof updatePreview === 'function') updatePreview();
+      // Echo back so parent knows the iframe accepted the template
+      window.parent.postMessage({
+        type: 'TEMPLATE_DATA',
+        payload: collectFormData()
+      }, '*');
+    }
+  });
+
+  // ── Collect all form values into one object ──
+  function collectFormData() {
+    return {
+      studentName:    getValSafe('studentName'),
+      regNo:          getValSafe('regNo'),
+      instituteName:  getValSafe('instituteName'),   // FIX: was missing entirely
+      subjectName:    getValSafe('subjectName'),
+      courseCode:     getValSafe('courseCode'),
+      semester:       getValSafe('semester'),
+      academicYear:   getValSafe('academicYear'),
+      tocContent:     getValSafe('tocContent'),
+    };
+  }
+
+  // ── Apply a data object back onto the form fields ──
+  function applyFormData(d) {
+    const set = (id, val) => {
+      const el = document.getElementById(id);
+      if (el && val !== undefined && val !== null) el.value = val;
+    };
+    set('studentName',   d.studentName);
+    set('regNo',         d.regNo);
+    set('instituteName', d.instituteName);   // FIX: was missing entirely
+    set('subjectName',   d.subjectName);
+    set('courseCode',    d.courseCode);
+    set('semester',      d.semester);
+    set('academicYear',  d.academicYear);
+    set('tocContent',    d.tocContent);
+  }
+
+  // Safe getValue that works before DOM is ready
+  function getValSafe(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+  }
+</script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: Arial, sans-serif;
+  background: #f5f5f5;
+  display: flex;
+  gap: 0;
+}
+
+/* ── LEFT PANEL ── */
+.form-panel {
+  width: 380px;
+  min-width: 380px;
+  background: #fff;
+  border-right: 1px solid #ddd;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+}
+.form-panel h2 {
+  font-size: 15px;
+  font-weight: 700;
+  color: #003366;
+  border-bottom: 2px solid #003366;
+  padding-bottom: 8px;
+  margin-bottom: 2px;
+}
+.form-panel h3 {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #666;
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+.form-group { display: flex; flex-direction: column; gap: 4px; }
+.form-row { display: flex; gap: 10px; }
+.form-row .form-group { flex: 1; }
+label { font-size: 12px; font-weight: 600; color: #444; }
+input, select, textarea {
+  padding: 7px 10px;
+  border: 1.5px solid #ddd;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: Arial, sans-serif;
+  background: #fafafa;
+  color: #222;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+input:focus, select:focus, textarea:focus {
+  outline: none;
+  border-color: #003366;
+  background: #fff;
+}
+textarea {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  resize: vertical;
+  min-height: 180px;
+  line-height: 1.5;
+}
+.toc-note {
+  background: #eef4ff;
+  border: 1px solid #c5d8f5;
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  line-height: 1.6;
+  color: #334;
+}
+.toc-note code {
+  background: #dce8fb;
+  border-radius: 3px;
+  padding: 1px 4px;
+  font-size: 10.5px;
+}
+.btn-gen {
+  padding: 11px;
+  background: #003366;
+  color: #fff;
+  border: none;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  transition: background 0.15s;
+  margin-top: 4px;
+}
+.btn-gen:hover { background: #00509e; }
+.btn-gen:disabled { background: #999; cursor: not-allowed; }
+.status {
+  font-size: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  display: none;
+}
+.status.ok  { background: #e8f8ef; color: #1a6b40; border: 1px solid #a0dbc0; display: block; }
+.status.err { background: #fef0f0; color: #a33;    border: 1px solid #f5c0c0; display: block; }
+
+/* ── RIGHT PANEL ── */
+.preview-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 30px 20px;
+  background: #888;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+}
+.preview-panel h4 {
+  color: #ddd;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 16px;
+  align-self: flex-start;
+  margin-left: 4px;
+}
+
+.a4-page {
+  width: 210mm;
+  height: 297mm;
+  min-height: 297mm;
+  max-height: 297mm;
+  background: #fff;
+  margin: 0 auto 20px;
+  position: relative;
+  font-family: 'Times New Roman', serif;
+  box-sizing: border-box;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  page-break-after: always;
+  break-after: page;
+  overflow: hidden;
+}
+
+.outer-border {
+  position: absolute;
+  top: 20px; left: 20px; right: 20px; bottom: 20px;
+  border: 3pt solid black;
+  pointer-events: none;
+  z-index: 2;
+}
+.inner-border {
+  position: absolute;
+  top: 26px; left: 26px; right: 26px; bottom: 26px;
+  border: 1pt solid black;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.content-area {
+  position: relative;
+  z-index: 10;
+  padding: 40px 60px;
+  height: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.kj-logo {
+  width: 440px;
+  display: block;
+  margin: 0 auto;
+}
+
+.toc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.toc-table th, .toc-table td {
+  border: 1px solid black;
+  padding: 6px;
+  vertical-align: top;
+  text-align: center;
+}
+.toc-table td.left { text-align: left; }
+
+.preview-section-title {
+  color: #ddd;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin: 24px 0 10px 4px;
+  align-self: flex-start;
+  border-top: 1px solid #aaa;
+  padding-top: 16px;
+  width: 100%;
+}
+
+.a4-doc-page {
+  width: 210mm;
+  height: 297mm;
+  min-height: 297mm;
+  max-height: 297mm;
+  background: #fff;
+  margin: 0 auto 20px;
+  position: relative;
+  font-family: 'Times New Roman', serif;
+  box-sizing: border-box;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  page-break-after: always;
+  break-after: page;
+}
+
+.a4-doc-page .outer-border {
+  position: absolute;
+  top: 20px; left: 20px; right: 20px; bottom: 20px;
+  border: 2pt solid black;
+  pointer-events: none;
+  z-index: 5;
+}
+.a4-doc-page .inner-border {
+  position: absolute;
+  top: 26px; left: 26px; right: 26px; bottom: 26px;
+  border: 1pt solid black;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.a4-doc-page .doc-header-bar {
+  position: relative;
+  z-index: 10;
+  margin: 36px 42px 0 42px;
+  padding: 6px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9pt;
+  font-family: 'Times New Roman', serif;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: none !important;
+}
+
+.a4-doc-page .doc-footer-bar {
+  margin: 0 42px 36px 42px;
+  padding: 6px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9pt;
+  font-family: 'Times New Roman', serif;
+  font-weight: 700;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  border: none !important;
+}
+
+.a4-doc-page .page-content {
+  flex: 1;
+  padding: 12px 50px;
+  font-family: 'Times New Roman', serif;
+  font-size: 12pt;
+  line-height: 1.5;
+  color: #000;
+  overflow: hidden;
+  position: relative;
+  z-index: 10;
+  box-sizing: border-box;
+}
+
+.page-content p {
+  font-size: 12pt;
+  line-height: 1.5;
+  margin: 0 0 6px 0;
+  font-family: 'Times New Roman', serif;
+  text-align: justify;
+  color: #000;
+}
+.page-content ul, .page-content ol {
+  padding-left: 22px;
+  margin: 2px 0 6px 0;
+  line-height: 1.5;
+}
+.page-content li {
+  font-size: 12pt;
+  line-height: 1.5;
+  font-family: 'Times New Roman', serif;
+  color: #000;
+}
+.page-content table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11pt;
+  margin: 8px 0;
+}
+.page-content table td,
+.page-content table th {
+  border: 1px solid #555;
+  padding: 4px 8px;
+  font-family: 'Times New Roman', serif;
+}
+.page-content img {
+  max-width: 100% !important;
+  width: auto !important;
+  height: auto !important;
+  max-height: 380px !important;
+  display: block !important;
+  margin: 10px auto !important;
+  object-fit: contain !important;
+}
+
+.a4-content-page {
+  width: 210mm;
+  height: 297mm;
+  min-height: 297mm;
+  max-height: 297mm;
+  background: #fff;
+  margin: 0 auto 20px;
+  position: relative;
+  font-family: 'Times New Roman', serif;
+  box-sizing: border-box;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.35);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.a4-content-page .outer-border {
+  position: absolute;
+  top: 20px; left: 20px; right: 20px; bottom: 20px;
+  border: 3pt solid black;
+  pointer-events: none;
+  z-index: 5;
+}
+.a4-content-page .inner-border {
+  position: absolute;
+  top: 26px; left: 26px; right: 26px; bottom: 26px;
+  border: 1pt solid black;
+  pointer-events: none;
+  z-index: 5;
+}
+.doc-header-bar {
+  position: relative;
+  z-index: 10;
+  margin: 36px 42px 0 42px;
+  padding: 6px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9pt;
+  font-family: 'Times New Roman', serif;
+  font-weight: 700;
+  border: none !important;
+}
+.doc-header-left { font-weight: 700; font-size: 9pt; color: #111; }
+.doc-header-right { font-weight: 700; font-size: 9pt; color: #111; text-align: right; }
+.doc-body {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  margin: 0 28px;
+  padding: 16px 10px;
+  font-size: 11pt;
+  font-family: 'Times New Roman', serif;
+  color: #111;
+  overflow: hidden;
+}
+.doc-footer-bar {
+  margin: 0 42px 36px 42px;
+  padding: 6px 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 9pt;
+  font-family: 'Times New Roman', serif;
+  font-weight: 700;
+  border: none !important;
+  position: relative;
+  z-index: 10;
+}
+</style>
+</head>
+<body>
+
+<!-- LEFT: Form Panel -->
+<div class="form-panel">
+  <div>
+    <h2>KJ Practical Record Generator</h2>
+    <p style="font-size:11px;color:#777;margin-top:4px;">Fill in details &rarr; preview updates live &rarr; download DOCX</p>
+  </div>
+
+  <h3>Student Details</h3>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Student Name</label>
+      <input type="text" id="studentName" value="" placeholder="Enter your name" oninput="updatePreview()">
+    </div>
+    <div class="form-group">
+      <label>Reg. Number</label>
+      <input type="text" id="regNo" value="25MCAC**" oninput="updatePreview()">
+    </div>
+  </div>
+
+  <h3>Course Details</h3>
+
+  <!-- FIX: instituteName field was completely missing from the form -->
+  <div class="form-group">
+    <label>Institute Name</label>
+    <input type="text" id="instituteName" value="KRISTU JAYANTI INSTITUTE OF TECHNOLOGY" oninput="updatePreview()">
+  </div>
+
+  <div class="form-group">
+    <label>Subject Name</label>
+    <input type="text" id="subjectName" value="" placeholder="Set by admin template" oninput="updatePreview()">
+  </div>
+  <div class="form-group">
+    <label>Course Code</label>
+    <input type="text" id="courseCode" value="" placeholder="Set by admin template" oninput="updatePreview()">
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Semester</label>
+      <select id="semester" onchange="updatePreview()">
+        <option>I Semester MCA</option>
+        <option selected>II Semester MCA</option>
+        <option>III Semester MCA</option>
+        <option>IV Semester MCA</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Academic Year</label>
+      <input type="text" id="academicYear" value="2025 - 2026" oninput="updatePreview()">
+    </div>
+  </div>
+
+  <h3>Table of Contents</h3>
+  <div class="toc-note">
+    Paste each row on a new line:<br>
+    <code>DD.MM.YYYY&nbsp;&nbsp;Program description&nbsp;&nbsp;PageRange</code>
+  </div>
+  <div class="form-group">
+    <label>TOC Rows</label>
+    <textarea id="tocContent" oninput="updatePreview()">18.12.2026  Write a program using Python to implement Linear Regression on Housing Prices to predict median house value.  1-3
+05.01.2026  Write a program using Python to implement Logistic Regression on the Breast Cancer Wisconsin Dataset to classify tumors as malignant or benign.  4-6
+08.01.2026  Write a program using Python to implement K-Nearest Neighbors (KNN) on the Iris Dataset to predict flower species.  7-9
+12.01.2026  Write a program using Python to implement a Decision Tree Classifier on the Titanic Dataset to predict passenger survival.  10-16
+19.01.2026  Write a program using Python to implement a Random Forest Classifier on the Wine Quality Dataset to predict wine quality scores.  17-22
+22.01.2026  Write a program using Python to implement a Naive Bayes Classifier on the SMS Spam Collection Dataset to detect spam messages.  23-26
+29.01.2026  Write a program using Python to implement Support Vector Machine (SVM) on the MNIST Dataset to recognize handwritten digits.  27-30
+05.02.2026  Write a program using Python to implement K-Means Clustering on the Mall Customer Dataset to segment customers based on spending and income.  31-34
+09.02.2026  Write a program using Python to implement data splitting into training and testing sets and apply cross-validation techniques to evaluate the performance of a model.  35-37
+23.02.2026  Write a Python program to implement feature scaling and normalization techniques for preprocessing a dataset.  38-40
+09.03.2026  Write a program using Python to implement a model and assess its performance by computing key evaluation metrics such as the confusion matrix, precision, recall, and F1-score.  41-43
+16.03.2026  Write a Python program to implement Principal Component Analysis (PCA) for performing dimensionality reduction on a given dataset.  44-46
+26.03.2026  Write a program using Python to implement and demonstrate the FIND-S algorithm to determine the most specific hypothesis from a given set of training data samples. The training dataset should be read from a .CSV file, and the implementation should be carried out using Python.  46-50</textarea>
+  </div>
+
+  <button class="btn-gen" id="genBtn" onclick="generateDOCX()">&darr; Download DOCX</button>
+  <div id="status" class="status"></div>
+</div>
+
+<!-- RIGHT: Live Preview -->
+<div class="preview-panel">
+  <h4>Live Preview</h4>
+  <div id="previewArea"></div>
+</div>
+
+<script>
+const LOGO = "image/logo.png";
+
+// ══════════════════════════════════════════════════════════════
+// PAGE BORDER XML
+// ══════════════════════════════════════════════════════════════
+const PAGE_BORDER_XML =
+  '<w:pgBorders w:offsetFrom="page">' +
+  '<w:top    w:val="thickThinMediumGap" w:color="000000" w:sz="20" w:space="20"/>' +
+  '<w:left   w:val="thickThinMediumGap" w:color="000000" w:sz="20" w:space="20"/>' +
+  '<w:bottom w:val="thickThinMediumGap" w:color="000000" w:sz="20" w:space="20"/>' +
+  '<w:right  w:val="thickThinMediumGap" w:color="000000" w:sz="20" w:space="20"/>' +
+  '</w:pgBorders>';
+
+async function injectBordersIntoDocx(blob) {
+  if (typeof JSZip === 'undefined') return blob;
+  const zip = await JSZip.loadAsync(blob);
+  const docXml = await zip.file('word/document.xml').async('string');
+  let fixed = docXml.replace(/<w:pgBorders[^>]*>[\s\S]*?<\/w:pgBorders>/g, '');
+  fixed = fixed.replace(/(<w:pgMar[^\/]*\/>)/g, '$1' + PAGE_BORDER_XML);
+  fixed = fixed.replace(/<\/w:sectPr>/g, (match, offset) => {
+    const window2 = fixed.substring(Math.max(0, offset - 400), offset);
+    if (window2.includes('<w:pgBorders')) return match;
+    return PAGE_BORDER_XML + match;
+  });
+  zip.file('word/document.xml', fixed);
+  return await zip.generateAsync({
+    type: 'blob',
+    mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    compression: 'DEFLATE'
+  });
+}
+
+function getVal(id) { return document.getElementById(id).value.trim(); }
+
+function parseTOC(text) {
+  const lines = text.split("\n").filter(l => l.trim());
+  const rows = [];
+  let sl = 1;
+  for (const line of lines) {
+    const dm = line.match(/(\d{2}\.\d{2}\.\d{4})/);
+    if (!dm) continue;
+    const dateStr = dm[1];
+    const rest = line.slice(line.indexOf(dateStr) + dateStr.length).trim();
+    const pm = rest.match(/(\d+[-\u2013]\d+|\d+)\s*$/);
+    const pageNo = pm ? pm[1] : "";
+    const content = pm ? rest.slice(0, rest.lastIndexOf(pm[0])).trim() : rest;
+    rows.push({ sl: String(sl++), date: dateStr, content, pageNo });
+  }
+  return rows;
+}
+
+function updatePreview() {
+  const name    = getVal("studentName");
+  const reg     = getVal("regNo");
+  const inst    = getVal("instituteName");   // FIX: now included
+  const subj    = getVal("subjectName");
+  const code    = getVal("courseCode");
+  const sem     = getVal("semester");
+  const year    = getVal("academicYear");
+  const toc     = parseTOC(document.getElementById("tocContent").value);
+
+  const tocRows = toc.map(r => `
+    <tr>
+      <td>${r.sl}</td>
+      <td>${r.date}</td>
+      <td class="left">${r.content}</td>
+      <td>${r.pageNo}</td>
+    </tr>`).join("");
+
+  document.getElementById("previewArea").innerHTML = `
+
+    <!-- PAGE 1: Cover -->
+    <div class="a4-page">
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="content-area">
+        <img src="${LOGO}" alt="KJU Logo" class="kj-logo">
+        <div style="text-align:center;font-weight:bold;font-size:16pt;margin-top:45px;">
+          ${inst}
+        </div>
+        <div style="text-align:center;margin-top:70px;font-size:16pt;font-weight:bold;">
+          Record on
+        </div>
+        <div style="text-align:center;margin-top:30px;font-weight:bold;font-size:18pt;text-transform:uppercase;">
+          ${subj}
+        </div>
+        <div style="text-align:center;margin-top:10px;font-weight:bold;font-size:14pt;">
+          (${code})
+        </div>
+        <div style="text-align:center;margin-top:90px;font-weight:bold;font-size:16pt;">
+          ${sem}
+        </div>
+        <div style="text-align:center;margin-top:8px;font-weight:bold;font-size:16pt;">
+          For the academic year ${year}
+        </div>
+        <div style="text-align:center;margin-top:70px;">
+          <div style="font-weight:bold;font-size:14pt;">Submitted by</div>
+          <div style="margin-top:10px;font-weight:bold;font-size:15pt;">${name}</div>
+          <div style="margin-top:5px;font-weight:bold;font-size:14pt;">${reg}</div>
+        </div>
+        <div style="text-align:center;margin-top:140px;font-weight:bold;line-height:2;font-size:14pt;">
+          <div>KRISTU JAYANTI (DEEMED TO BE UNIVERSITY)</div>
+          <div>K. Narayanapura, Kothanur Post,</div>
+          <div>Bengaluru-560077</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE 2: Certificate -->
+    <div class="a4-page">
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="content-area">
+        <img src="${LOGO}" alt="KJU Logo" class="kj-logo">
+        <div style="text-align:center;font-weight:bold;font-size:16pt;margin-top:35px;">
+          ${inst}
+        </div>
+        <div style="text-align:center;margin-top:70px;font-weight:bold;font-size:18pt;">
+          Master of Computer Applications
+        </div>
+        <div style="width:320px;margin:35px auto;border:1px solid black;border-radius:6px;
+                    text-align:center;padding:6px;font-weight:bold;font-size:20pt;">
+          CERTIFICATE
+        </div>
+        <div style="margin-top:60px;text-align:justify;line-height:2;font-size:14pt;">
+          This is to certify that <strong>${name}</strong> bearing roll
+          number <strong>${reg}</strong> has satisfactorily completed the
+          practical programs for the course
+          <strong>${subj}, ${code}</strong>
+          during the academic year ${year}.
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:120px;font-weight:bold;font-size:14pt;">
+          <div>Date:</div>
+          <div>Faculty in-charge</div>
+        </div>
+        <div style="text-align:right;margin-top:70px;font-weight:bold;font-size:14pt;">
+          Head of the Department
+        </div>
+        <div style="margin-top:80px;font-size:14pt;">
+          Examiners (Name &amp; Signature)
+        </div>
+        <div style="margin-top:35px;">1. ____________________</div>
+        <div style="margin-top:35px;">2. ____________________</div>
+        <div style="text-align:right;margin-top:-70px;">
+          <div>Center: Kristu Jayanti University</div>
+          <div style="margin-top:15px;">Date:</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PAGE 3: TOC -->
+    <div class="a4-page toc-page">
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="content-area">
+        <img src="${LOGO}" alt="KJU Logo" class="kj-logo">
+        <div style="text-align:center;font-weight:bold;margin-top:20px;margin-bottom:25px;font-size:16pt;">
+          Table of Contents
+        </div>
+        <table class="toc-table">
+          <thead>
+            <tr>
+              <th>Sl. No.</th>
+              <th>Date</th>
+              <th>Content</th>
+              <th>Page No</th>
+            </tr>
+          </thead>
+          <tbody>${tocRows}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- DIVIDER label -->
+    <div class="preview-section-title">
+      &#9656; Preview 2 &mdash; Actual Practical Record Format (Uploaded Document)
+    </div>
+
+    <!-- Placeholder page shown before any upload -->
+    <div class="a4-content-page" id="uploadedDocPreview">
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="doc-header-bar">
+        <span class="doc-header-left">Kristu Jayanti (Deemed to be University)</span>
+        <span class="doc-header-right">${code} - ${subj}</span>
+      </div>
+      <div class="doc-body" id="uploadedDocBody">
+        <p style="color:#999;font-style:italic;text-align:center;margin-top:60px;">
+          No document uploaded yet. Please upload a .docx file from the Upload page.
+        </p>
+      </div>
+      <div class="doc-footer-bar">
+        <span>${reg}</span>
+        <span>1</span>
+      </div>
+    </div>
+  `;
+
+  if (uploadedDocxBuffer) {
+    mammoth.convertToHtml({
+      arrayBuffer: uploadedDocxBuffer,
+      convertImage: mammoth.images.imgElement(function(image) {
+        return image.read("base64").then(function(imageContents) {
+          return { src: "data:" + image.contentType + ";base64," + imageContents };
+        });
+      })
+    })
+    .then(result => {
+      uploadedDocxHtml = result.value;
+      renderPaginatedDoc(result.value, reg, code, subj);
+    })
+    .catch(err => {
+      const bodyEl = document.getElementById('uploadedDocBody');
+      if (bodyEl) bodyEl.innerHTML = '<p style="color:red;">Error: ' + err.message + '</p>';
+    });
+  }
+
+  // FIX: Only post TEMPLATE_DATA up to parent if the parent explicitly loaded
+  // a template first (templateLoadedByParent flag). This prevents the iframe
+  // from overwriting admin-set values with its own hardcoded defaults on startup.
+  if (templateLoadedByParent) {
+    window.parent.postMessage({
+      type: 'TEMPLATE_DATA',
+      payload: collectFormData()   // FIX: uses real collectFormData(), not a placeholder comment
+    }, '*');
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════
+   IMAGE UTILITIES
+   ══════════════════════════════════════════════════════════════ */
+function loadImageInfo(src) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const match = src.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) { resolve(null); return; }
+      const mimeType = match[1];
+      const b64 = match[2];
+      try {
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const ext = mimeType.includes('png') ? 'png' : mimeType.includes('gif') ? 'gif' : 'jpg';
+        resolve({ width: img.naturalWidth || img.width || 400, height: img.naturalHeight || img.height || 300, bytes, ext });
+      } catch(e) { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════
+   generateDOCX
+   ══════════════════════════════════════════════════════════════ */
+async function generateDOCX() {
+  const btn      = document.getElementById("genBtn");
+  const statusEl = document.getElementById("status");
+  btn.disabled = true;
+  statusEl.className   = "status";
+  statusEl.style.display = "none";
+
+  try {
+    console.log("[DOCX] Starting generation…");
+    if (typeof docx === 'undefined') throw new Error('docx library not loaded — check CDN.');
+    if (typeof docx.Packer.toBlob !== 'function') {
+      throw new Error('Packer.toBlob unavailable — wrong docx version or CDN issue.');
+    }
+
+    const {
+      Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+      Header, Footer, AlignmentType, BorderStyle, WidthType,
+      PageNumber, TabStopType, ImageRun, SectionType, ShadingType,
+      convertMillimetersToTwip,
+    } = docx;
+
+    const reg  = getVal("regNo");
+    const name = getVal("studentName");
+    const inst = getVal("instituteName");
+    const subj = getVal("subjectName");
+    const code = getVal("courseCode");
+    const sem  = getVal("semester");
+    const year = getVal("academicYear");
+    const toc  = parseTOC(document.getElementById("tocContent").value);
+
+    const A4_W = convertMillimetersToTwip(210);
+    const A4_H = convertMillimetersToTwip(297);
+
+    const COVER_MARGIN = {
+      top:    convertMillimetersToTwip(20),
+      bottom: convertMillimetersToTwip(20),
+      left:   convertMillimetersToTwip(20),
+      right:  convertMillimetersToTwip(20),
+      header: convertMillimetersToTwip(8),
+      footer: convertMillimetersToTwip(8),
+      gutter: 0,
+    };
+
+    const CONTENT_MARGIN = {
+      top:    convertMillimetersToTwip(22),
+      bottom: convertMillimetersToTwip(22),
+      left:   convertMillimetersToTwip(18),
+      right:  convertMillimetersToTwip(18),
+      header: convertMillimetersToTwip(10),
+      footer: convertMillimetersToTwip(10),
+      gutter: 0,
+    };
+
+    const F = "Times New Roman";
+    const S9=18, S12=24, S14=28, S16=32, S18=36, S20=40;
+
+    function sp(before=0, after=120, line=360) {
+      return { before, after, line, lineRule: "auto" };
+    }
+    function T(text, { bold=false, size=S12, italic=false } = {}) {
+      return new TextRun({ text: String(text ?? ''), font:F, size, bold, italics:italic, color:"000000" });
+    }
+    function P(text, { align=AlignmentType.LEFT, bold=false, size=S12,
+                       before=0, after=120, line=360 } = {}) {
+      return new Paragraph({
+        alignment: align,
+        spacing: sp(before, after, line),
+        children: [T(text, { bold, size })],
+      });
+    }
+    function blank(before=0, after=0) {
+      return new Paragraph({ spacing: sp(before, after, 240), children: [T("")] });
+    }
+    function tabLine(left, right, { size=S14, bold=true, pos=7800 } = {}) {
+      return new Paragraph({
+        alignment: AlignmentType.LEFT,
+        spacing: sp(0, 0, 240),
+        tabStops: [{ type: TabStopType.RIGHT, position: pos }],
+        children: [T(left,{bold,size}), T("\t",{size}), T(right,{bold,size})],
+      });
+    }
+    function cb() { return { style: BorderStyle.SINGLE, size: 6, color: "000000" }; }
+    function tcell(text, w, align=AlignmentType.CENTER, isHeader=false) {
+      return new TableCell({
+        width: { size: w, type: WidthType.DXA },
+        borders: { top:cb(), bottom:cb(), left:cb(), right:cb() },
+        shading: isHeader ? { fill:"EEEEEE", type:ShadingType.CLEAR } : undefined,
+        margins: { top:60, bottom:60, left:80, right:80 },
+        children: [new Paragraph({
+          alignment: align,
+          spacing: sp(0,0,280),
+          children: [T(text, { bold:isHeader, size:S12 })]
+        })]
+      });
+    }
+
+    // ── Logo ──
+    let logoRun = null;
+    try {
+      const resp = await fetch(LOGO);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const buf = await resp.arrayBuffer();
+      logoRun = new ImageRun({ data: buf, transformation: { width:440, height:88 }, type:"png" });
+    } catch(e) {
+      console.warn("[DOCX] Logo fetch failed (skipping):", e.message);
+    }
+    function logoPara() {
+      return logoRun
+        ? new Paragraph({ alignment:AlignmentType.CENTER, spacing:sp(0,200,240), children:[logoRun] })
+        : blank(0,200);
+    }
+
+    // ── COVER SECTION ──
+    const coverSection = {
+      properties: {
+        page: { size:{ width:A4_W, height:A4_H }, margin:COVER_MARGIN },
+        type: SectionType.NEXT_PAGE,
+      },
+      headers: { default: new Header({ children:[blank()] }) },
+      footers: { default: new Footer({ children:[blank()] }) },
+      children: [
+        logoPara(),
+        blank(200,0),
+        P(inst,{bold:true,size:S16,align:AlignmentType.CENTER,after:400}),
+        blank(0,0),blank(0,0),blank(0,0),
+        P("Record on",{bold:true,size:S16,align:AlignmentType.CENTER,after:300}),
+        blank(0,0),
+        P(subj,{bold:true,size:S18,align:AlignmentType.CENTER,after:100}),
+        P(`(${code})`,{bold:true,size:S14,align:AlignmentType.CENTER,after:400}),
+        blank(0,0),blank(0,0),blank(0,0),
+        P(sem,{bold:true,size:S16,align:AlignmentType.CENTER,after:80}),
+        P(`For the academic year ${year}`,{bold:true,size:S16,align:AlignmentType.CENTER,after:500}),
+        blank(0,0),blank(0,0),blank(0,0),blank(0,0),
+        P("Submitted by",{bold:true,size:S14,align:AlignmentType.CENTER,after:100}),
+        P(name,{bold:true,size:S16,align:AlignmentType.CENTER,after:80}),
+        P(reg,{bold:true,size:S14,align:AlignmentType.CENTER,after:600}),
+        blank(0,0),blank(0,0),blank(0,0),blank(0,0),
+        P("KRISTU JAYANTI (DEEMED TO BE UNIVERSITY)",{bold:true,size:S14,align:AlignmentType.CENTER,after:80}),
+        P("K. Narayanapura, Kothanur Post,",{bold:true,size:S14,align:AlignmentType.CENTER,after:80}),
+        P("Bengaluru-560077",{bold:true,size:S14,align:AlignmentType.CENTER,after:0}),
+      ]
+    };
+
+    // ── CERTIFICATE SECTION ──
+    const certBox = new Table({
+      width:        { size:4000, type:WidthType.DXA },
+      columnWidths: [4000],
+      alignment:    AlignmentType.CENTER,
+      rows: [new TableRow({ children:[
+        new TableCell({
+          width: { size:4000, type:WidthType.DXA },
+          borders: {
+            top:    { style:BorderStyle.SINGLE, size:12, color:"000000" },
+            bottom: { style:BorderStyle.SINGLE, size:12, color:"000000" },
+            left:   { style:BorderStyle.SINGLE, size:12, color:"000000" },
+            right:  { style:BorderStyle.SINGLE, size:12, color:"000000" },
+          },
+          margins: { top:100, bottom:100, left:200, right:200 },
+          children: [new Paragraph({
+            alignment: AlignmentType.CENTER,
+            spacing:   sp(0,0,240),
+            children:  [T("CERTIFICATE",{bold:true,size:S20})],
+          })]
+        })
+      ]})]
+    });
+
+    const certSection = {
+      properties: {
+        page: { size:{ width:A4_W, height:A4_H }, margin:COVER_MARGIN },
+        type: SectionType.NEXT_PAGE,
+      },
+      headers: { default: new Header({ children:[blank()] }) },
+      footers: { default: new Footer({ children:[blank()] }) },
+      children: [
+        logoPara(),
+        blank(200,0),
+        P(inst,{bold:true,size:S16,align:AlignmentType.CENTER,after:200}),
+        blank(0,0),blank(0,0),
+        P("Master of Computer Applications",{bold:true,size:S18,align:AlignmentType.CENTER,after:200}),
+        blank(0,0),
+        certBox,
+        blank(0,0),blank(0,0),blank(0,0),
+        new Paragraph({
+          alignment: AlignmentType.JUSTIFIED,
+          spacing:   sp(100,100,480),
+          children: [
+            T("This is to certify that ",{size:S14}),
+            T(name,{bold:true,size:S14}),
+            T(" bearing roll number ",{size:S14}),
+            T(reg,{bold:true,size:S14}),
+            T(" has satisfactorily completed the practical programs for the course ",{size:S14}),
+            T(`${subj}, ${code}`,{bold:true,size:S14}),
+            T(` during the academic year ${year}.`,{size:S14}),
+          ]
+        }),
+        blank(0,0),blank(0,0),blank(0,0),blank(0,0),
+        tabLine("Date:","Faculty in-charge"),
+        blank(0,0),blank(0,0),blank(0,0),
+        P("Head of the Department",{bold:true,size:S14,align:AlignmentType.RIGHT,after:0}),
+        blank(0,0),blank(0,0),blank(0,0),
+        P("Examiners (Name & Signature)",{size:S14,after:300}),
+        P("1. ____________________",{size:S14,after:200}),
+        P("2. ____________________",{size:S14,after:0}),
+        tabLine("","Center: Kristu Jayanti University",{bold:false}),
+        tabLine("","Date:",{bold:true}),
+      ]
+    };
+
+    // ── TOC SECTION ──
+    const tocTable = new Table({
+      width:        { size:9200, type:WidthType.DXA },
+      columnWidths: [900,1200,6200,900],
+      rows: [
+        new TableRow({ tableHeader:true, children:[
+          tcell("Sl. No.",900,AlignmentType.CENTER,true),
+          tcell("Date",   1200,AlignmentType.CENTER,true),
+          tcell("Content",6200,AlignmentType.CENTER,true),
+          tcell("Page No",900,AlignmentType.CENTER,true),
+        ]}),
+        ...toc.map(r => new TableRow({ children:[
+          tcell(r.sl,      900,  AlignmentType.CENTER),
+          tcell(r.date,    1200, AlignmentType.CENTER),
+          tcell(r.content, 6200, AlignmentType.LEFT),
+          tcell(r.pageNo,  900,  AlignmentType.CENTER),
+        ]}))
+      ]
+    });
+
+    const tocSection = {
+      properties: {
+        page: { size:{ width:A4_W, height:A4_H }, margin:COVER_MARGIN },
+        type: SectionType.NEXT_PAGE,
+      },
+      headers: { default: new Header({ children:[blank()] }) },
+      footers: { default: new Footer({ children:[blank()] }) },
+      children: [
+        logoPara(),
+        blank(200,0),
+        P("Table of Contents",{bold:true,size:S16,align:AlignmentType.CENTER,after:300}),
+        tocTable,
+      ]
+    };
+
+    // ── CONTENT SECTION (uploaded DOCX body) ──
+    const sections = [coverSection, certSection, tocSection];
+
+    if (uploadedDocxHtml) {
+      const hdr = new Header({ children:[
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing:   sp(0,0,240),
+          tabStops:  [{ type:TabStopType.RIGHT, position:9026 }],
+          children:  [
+            T("Kristu Jayanti (Deemed to be University)",{bold:true,size:S9}),
+            T("\t",{size:S9}),
+            T(`${code} - ${subj}`,{bold:true,size:S9}),
+          ]
+        })
+      ]});
+      const ftr = new Footer({ children:[
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing:   sp(0,0,240),
+          tabStops:  [{ type:TabStopType.RIGHT, position:9026 }],
+          children:  [
+            T(reg,{bold:true,size:S9}),
+            T("\t",{size:S9}),
+            new TextRun({ children:[PageNumber.CURRENT], bold:true, font:F, size:S9 }),
+          ]
+        })
+      ]});
+
+      console.log("[DOCX] Building body paragraphs (including images)…");
+      const bodyParas = await htmlToDocxParas(uploadedDocxHtml, { S12, S14, S16, T, blank });
+      console.log("[DOCX] Body paragraphs built:", bodyParas.length);
+
+      sections.push({
+        properties: {
+          page: { size:{ width:A4_W, height:A4_H }, margin:CONTENT_MARGIN },
+          type: SectionType.NEXT_PAGE,
+        },
+        headers: { default: hdr },
+        footers: { default: ftr },
+        children: bodyParas.length > 0 ? bodyParas : [blank()],
+      });
+    }
+
+    const doc = new Document({ sections });
+
+    console.log("[DOCX] Calling Packer.toBlob()…");
+    let blob = await Packer.toBlob(doc);
+    console.log("[DOCX] Initial blob size:", blob.size, "bytes");
+
+    blob = await injectBordersIntoDocx(blob);
+    console.log("[DOCX] Final blob size:", blob.size, "bytes");
+
+    const url = URL.createObjectURL(blob);
+    const a   = document.createElement('a');
+    a.href     = url;
+    a.download = `KJ_Record_${reg}.docx`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    statusEl.className   = "status ok";
+    statusEl.textContent = "\u2713 Downloaded — A4 with borders on every page";
+
+  } catch (e) {
+    console.error("[DOCX] FAILED:", e);
+    statusEl.className   = "status err";
+    statusEl.textContent = "Error: " + e.message;
+  }
+  btn.disabled = false;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   htmlToDocxParas — async, mammoth HTML → docx.js Paragraph array
+   ══════════════════════════════════════════════════════════════ */
+async function htmlToDocxParas(html, { S12, S14, S16, T, blank }) {
+  const { Paragraph, TextRun, ImageRun, AlignmentType } = docx;
+  const F = "Times New Roman";
+
+  function sp(before=0, after=120, line=360) {
+    return { before, after, line, lineRule: "auto" };
+  }
+
+  const parser = new DOMParser();
+  const doc2   = parser.parseFromString('<div id="r">' + html + '</div>', 'text/html');
+  const root   = doc2.getElementById('r');
+  const paras  = [];
+  let titleDone     = false;
+  let toplevelCount = 0;
+  const MAX_IMG_WIDTH_PT = 460;
+
+  function buildTextChildren(line, sz) {
+    return line
+      .split(/(«[^»]*»)/g)
+      .filter(seg => seg.length > 0)
+      .map(seg => {
+        if (seg.startsWith('«') && seg.endsWith('»')) {
+          return new TextRun({ text: String(seg.slice(1,-1) ?? ''), bold:true, font:F, size:sz, color:"000000" });
+        }
+        return new TextRun({ text: String(seg ?? ''), font:F, size:sz, color:"000000" });
+      });
+  }
+
+  async function processNode(node) {
+    if (node.nodeName === 'IMG') {
+      const src = node.getAttribute('src') || '';
+      if (!src.startsWith('data:')) return;
+      const info = await loadImageInfo(src);
+      if (!info) { console.warn('[IMG] Could not load image info, skipping.'); return; }
+      const ratio = Math.min(1, MAX_IMG_WIDTH_PT / info.width);
+      const w = Math.round(info.width  * ratio);
+      const h = Math.round(info.height * ratio);
+      try {
+        paras.push(new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing:   sp(120, 120, 240),
+          children:  [new ImageRun({ data: info.bytes, transformation: { width: w, height: h }, type: info.ext })],
+        }));
+      } catch(e) { console.warn('[IMG] Failed to create ImageRun:', e.message); }
+      return;
+    }
+
+    if (node.nodeType === 1 && node.querySelector && node.querySelector('img')) {
+      for (const child of Array.from(node.childNodes)) { await processNode(child); }
+      return;
+    }
+
+    if (node.nodeType === 3) return;
+
+    const text = (node.textContent || '').trim();
+    if (!text) {
+      if (node.childNodes) { for (const child of Array.from(node.childNodes)) { await processNode(child); } }
+      return;
+    }
+
+    const innerHtml = node.innerHTML || '';
+    const markedLine = innerHtml
+      .replace(/<strong[^>]*>([\s\S]*?)<\/strong>/gi, (_, t) => `«${t.replace(/<[^>]+>/g,'')}»`)
+      .replace(/<b[^>]*>([\s\S]*?)<\/b>/gi, (_, t) => `«${t.replace(/<[^>]+>/g,'')}»`)
+      .replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&nbsp;/g,' ')
+      .trim();
+
+    if (!markedLine) return;
+
+    const isToplevel   = /^\d+\.\s+\S/.test(text) && !/^\d+\.\d+/.test(text);
+    const isSubheading = /^\d+\.\d+/.test(text);
+
+    if (!titleDone) {
+      titleDone = true;
+      paras.push(new Paragraph({
+        alignment: AlignmentType.CENTER,
+        spacing:   sp(0, 200, 360),
+        children:  [new TextRun({ text: String(markedLine ?? ''), bold:true, font:F, size:S16, color:"000000" })],
+      }));
+      return;
+    }
+
+    if (isToplevel) {
+      toplevelCount++;
+      paras.push(new Paragraph({
+        alignment:       AlignmentType.LEFT,
+        spacing:         sp(0, 160, 360),
+        pageBreakBefore: toplevelCount > 1,
+        children: [new TextRun({ text: String(markedLine ?? ''), bold:true, font:F, size:S14, color:"000000" })],
+      }));
+      return;
+    }
+
+    if (isSubheading) {
+      paras.push(new Paragraph({
+        alignment: AlignmentType.LEFT,
+        spacing:   sp(120, 80, 360),
+        children:  [new TextRun({ text: String(markedLine ?? ''), bold:true, font:F, size:S12, color:"000000" })],
+      }));
+      return;
+    }
+
+    paras.push(new Paragraph({
+      alignment: AlignmentType.JUSTIFIED,
+      spacing:   sp(0, 120, 360),
+      children:  buildTextChildren(markedLine, S12),
+    }));
+  }
+
+  for (const child of Array.from(root.childNodes)) { await processNode(child); }
+  return paras;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   renderPaginatedDoc — paginated preview with image support
+   ══════════════════════════════════════════════════════════════ */
+function renderPaginatedDoc(html, reg, code, subj) {
+  const oldWrap   = document.getElementById('uploadedPagesWrap');
+  if (oldWrap) oldWrap.remove();
+  const oldSingle = document.getElementById('uploadedDocPreview');
+  if (oldSingle) oldSingle.remove();
+
+  const previewArea = document.getElementById('previewArea');
+  const wrap = document.createElement('div');
+  wrap.id = 'uploadedPagesWrap';
+  wrap.style.cssText = 'width:210mm;margin:0 auto;display:flex;flex-direction:column;gap:0;';
+  previewArea.appendChild(wrap);
+
+  const parser   = new DOMParser();
+  const parsed   = parser.parseFromString('<div id="root">' + html + '</div>', 'text/html');
+  const allNodes = Array.from(parsed.getElementById('root').childNodes);
+
+  let PAGE_H = 870;
+  try {
+    const probe = document.createElement('div');
+    probe.className = 'a4-doc-page';
+    probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;top:-9999px;';
+    probe.innerHTML = `
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="doc-header-bar" style="margin:36px 42px 0 42px;padding:6px 4px;flex-shrink:0;"></div>
+      <div class="page-content" id="_probe_content" style="flex:1;padding:12px 50px;box-sizing:border-box;"></div>
+      <div class="doc-footer-bar" style="margin:0 42px 36px 42px;padding:6px 4px;flex-shrink:0;"></div>`;
+    document.body.appendChild(probe);
+    const contentEl = probe.querySelector('.page-content');
+    if (contentEl) PAGE_H = contentEl.clientHeight || 870;
+    document.body.removeChild(probe);
+  } catch(_) {}
+
+  PAGE_H = Math.max(800, PAGE_H - 8);
+  const MIN_BREAK_H = 80;
+
+  let pageNum          = 0;
+  let currentContentEl = null;
+  let usedH            = 0;
+  let mainTitleFound   = false;
+
+  function newPage() {
+    pageNum++;
+    const pn   = pageNum;
+    const page = document.createElement('div');
+    page.className = 'a4-doc-page';
+    page.innerHTML = `
+      <div class="outer-border"></div>
+      <div class="inner-border"></div>
+      <div class="doc-header-bar">
+        <span style="font-weight:700;font-style:normal;">Kristu Jayanti (Deemed to be University)</span>
+        <span style="font-weight:700;font-style:normal;">${code} - ${subj}</span>
+      </div>
+      <div class="page-content" id="pc-${pn}"></div>
+      <div class="doc-footer-bar">
+        <span style="font-weight:700;">${reg}</span>
+        <span style="font-weight:700;">${pn}</span>
+      </div>`;
+    wrap.appendChild(page);
+    currentContentEl = page.querySelector('.page-content');
+    usedH = 0;
+    return currentContentEl;
+  }
+
+  function classifyNode(node) {
+    if (!node || node.nodeType !== 1) return 'body';
+    if (node.nodeName === 'IMG') return 'image';
+    if (node.querySelector && node.querySelector('img')) return 'image-container';
+    const text = (node.textContent || '').trim();
+    if (!text) return 'empty';
+    if (/^\d+\.\s+\S/.test(text) && !/^\d+\.\d+/.test(text)) return 'toplevel';
+    if (/^\d+\.\d+/.test(text)) return 'subheading';
+    return 'body';
+  }
+
+  function stripUnderlines(el) {
+    if (el.style) { el.style.textDecoration = 'none'; el.style.borderBottom = 'none'; el.style.border = 'none'; }
+    el.querySelectorAll && el.querySelectorAll('u').forEach(u => {
+      const span = document.createElement('span');
+      span.innerHTML = u.innerHTML;
+      u.replaceWith(span);
+    });
+    el.querySelectorAll && el.querySelectorAll('*').forEach(child => {
+      if (child.style) { child.style.textDecoration = 'none'; child.style.borderBottom = 'none'; }
+    });
+  }
+
+  function styleNode(node, classification) {
+    const clone = node.cloneNode(true);
+    stripUnderlines(clone);
+
+    if (classification === 'image' || classification === 'image-container') {
+      const imgs = clone.nodeName === 'IMG' ? [clone] : Array.from(clone.querySelectorAll('img'));
+      imgs.forEach(img => {
+        const src = img.getAttribute('src');
+        if (src) img.src = src;
+        img.style.cssText = 'max-width:100% !important;width:auto !important;height:auto !important;max-height:380px !important;display:block !important;margin:10px auto !important;object-fit:contain !important;';
+        img.removeAttribute('width');
+        img.removeAttribute('height');
+      });
+      if (clone.nodeName === 'IMG') {
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'text-align:center;margin:10px 0;';
+        wrapper.appendChild(clone);
+        return wrapper;
+      }
+      clone.style.cssText = 'text-align:center;margin:10px 0;display:block;';
+      return clone;
+    }
+
+    const text = (clone.textContent || '').trim();
+
+    if (!mainTitleFound && text) {
+      mainTitleFound = true;
+      clone.style.cssText = "text-align:center !important;font-size:16pt !important;font-weight:bold !important;font-family:'Times New Roman',serif;margin:0 0 12px 0;display:block;line-height:1.5;";
+      clone.querySelectorAll('*').forEach(el => { el.style.fontWeight = 'bold'; });
+      return clone;
+    }
+
+    if (classification === 'toplevel') {
+      clone.style.cssText = "font-size:14pt !important;font-weight:bold !important;font-family:'Times New Roman',serif;margin:0 0 8px 0;display:block;line-height:1.5;";
+      clone.querySelectorAll('*').forEach(el => { el.style.fontWeight = 'bold'; el.style.fontSize = '14pt'; });
+      return clone;
+    }
+
+    if (classification === 'subheading') {
+      clone.style.cssText = "font-size:12pt !important;font-weight:bold !important;font-family:'Times New Roman',serif;margin:6px 0 4px 0;display:block;line-height:1.5;";
+      clone.querySelectorAll('*').forEach(el => { el.style.fontWeight = 'bold'; });
+      return clone;
+    }
+
+    const boldKids  = clone.querySelectorAll ? Array.from(clone.querySelectorAll('strong, b')) : [];
+    const directTxt = clone.childNodes ? Array.from(clone.childNodes).filter(n => n.nodeType === 3 && n.textContent.trim()).length : 0;
+    if (boldKids.length > 0 && directTxt === 0 && boldKids[0].textContent.trim() === text) {
+      clone.style.cssText = "font-size:12pt !important;font-weight:bold !important;font-family:'Times New Roman',serif;margin:6px 0 2px 0;display:block;line-height:1.5;";
+      clone.querySelectorAll('*').forEach(el => { el.style.fontWeight = 'bold'; });
+      return clone;
+    }
+
+    clone.style.cssText = "font-size:12pt;line-height:1.5;font-family:'Times New Roman',serif;margin:0 0 6px 0;text-align:justify;color:#000;display:block;";
+    return clone;
+  }
+
+  function measureHeight(nodeClone) {
+    const ruler = document.createElement('div');
+    ruler.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;width:calc(210mm - 100px);top:0;left:-9999px;font-family:'Times New Roman',serif;font-size:12pt;line-height:1.5;box-sizing:border-box;";
+    document.body.appendChild(ruler);
+    const cloned = nodeClone.cloneNode(true);
+    cloned.querySelectorAll && cloned.querySelectorAll('img').forEach(img => {
+      const src = img.getAttribute('src');
+      if (src) img.src = src;
+      img.style.cssText = 'max-width:100%;width:auto;height:auto;max-height:380px;display:block;';
+    });
+    ruler.appendChild(cloned);
+    const h = ruler.scrollHeight || ruler.offsetHeight || 20;
+    document.body.removeChild(ruler);
+    return Math.max(h, 20);
+  }
+
+  newPage();
+
+  for (const node of allNodes) {
+    if (node.nodeType === 3 && !node.textContent.trim()) continue;
+    if (node.nodeType === 1 && !(node.textContent || '').trim()
+        && !(node.nodeName === 'IMG') && !(node.querySelector && node.querySelector('img'))) continue;
+
+    const cls = classifyNode(node);
+    if (cls === 'empty') continue;
+
+    if (cls === 'toplevel') {
+      if (usedH > MIN_BREAK_H) newPage();
+      const styled = styleNode(node, cls);
+      currentContentEl.appendChild(styled);
+      usedH += measureHeight(styled);
+      continue;
+    }
+
+    const styled = styleNode(node, cls);
+    const h      = measureHeight(styled);
+    const breakThreshold = (cls === 'image' || cls === 'image-container') ? PAGE_H * 0.6 : PAGE_H;
+    if (usedH + h > breakThreshold && usedH > 10) newPage();
+    currentContentEl.appendChild(styled);
+    usedH += h;
+  }
+}
+
+// ── Boot ──
+window.__kjReady = true;
+updatePreview();
+</script>
+</body>
+</html>

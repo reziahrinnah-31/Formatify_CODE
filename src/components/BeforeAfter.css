@@ -1,0 +1,89 @@
+.ba-section { background: var(--bg); }
+
+.ba-slider {
+  position: relative;
+  max-width: 800px;
+  margin: 0 auto;
+  height: 420px;
+  border-radius: 16px;
+  overflow: hidden;
+  cursor: col-resize;
+  border: 1px solid var(--border);
+  user-select: none;
+}
+
+.ba-panel {
+  position: absolute;
+  top: 0; left: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ba-before {
+  width: 100%;
+  background: #111;
+  padding: 28px;
+}
+
+.ba-after {
+  background: #0f1a10;
+  padding: 28px;
+  border-right: 2px solid #c8102e;
+  z-index: 2;
+  transition: width 0.05s linear;
+  white-space: nowrap;
+}
+
+.ba-label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #FFFF;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 20px;
+}
+.ba-label--red { color: #c8102e; }
+
+/* Messy doc */
+.ba-doc--messy { padding: 20px; }
+.doc-line { height: 8px; background: rgba(255,255,255,0.07); border-radius: 4px; margin-bottom: 12px; }
+.doc-line.short  { width: 40%; }
+.doc-line.medium { width: 70%; }
+.doc-line.long   { width: 90%; }
+.doc-icon { text-align: center; margin-top: 40px; font-size: 36px; color: #8b0d0d; }
+.doc-icon p { font-size: 13px; color: #FFFF; margin-top: 8px; }
+
+/* Clean doc */
+.ba-doc--clean { padding: 20px; }
+.clean-header { height: 12px; background: rgba(200,16,46,0.3); border-radius: 4px; margin-bottom: 20px; }
+.clean-line { height: 7px; background: #FFFF(255,255,255,0.15); border-radius: 4px; margin-bottom: 10px; }
+.clean-line.short  { width: 50%; }
+.clean-line.medium { width: 75%; }
+.clean-footer { height: 1px; background: rgba(255,255,255,0.1); margin: 30px 0 12px; }
+.clean-page { font-size: 11px; color: #FFFF; text-align: center; }
+
+/* Handle */
+.ba-handle {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  height: 100%;
+  width: 2px;
+  background: #c8102e;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.handle-circle {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: #c8102e;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  box-shadow: 0 0 20px rgba(200,16,46,0.6);
+  cursor: grab;
+}

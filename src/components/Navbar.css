@@ -1,0 +1,118 @@
+.navbar {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 18px 8%;
+  background: rgba(10, 10, 10, 0.85);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+  transition: all 0.3s ease;
+}
+
+.navbar--scrolled {
+  padding: 12px 8%;
+  background: rgba(10,10,10,0.97);
+  box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+}
+
+.logo {
+  font-size: 22px;
+  font-weight: 800;
+  color: white;
+  letter-spacing: 2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: transform 0.3s ease;
+}
+.logo:hover { transform: scale(1.04); }
+
+.logo-icon {
+  background: #c8102e;
+  color: white;
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.logo-red { color: #c8102e; }
+
+.nav-links {
+  display: flex;
+  gap: 35px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.nav-links a {
+  position: relative;
+  color: #fff;
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+.nav-links a:hover { color: #fff; }
+
+.nav-links a::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -5px;
+  width: 0;
+  height: 2px;
+  background: #c8102e;
+  transition: width 0.3s ease;
+}
+.nav-links a:hover::after { width: 100%; }
+
+.nav-buttons { display: flex; gap: 12px; }
+
+.login-btn {
+  padding: 10px 22px;
+  border: 1px solid #c8102e;
+  background: transparent;
+  color: white;
+  border-radius: 8px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+.login-btn:hover {
+  background: rgba(200,16,46,0.15);
+  transform: translateY(-2px);
+  box-shadow: 0 0 18px var(--red-glow);
+}
+
+.register-btn {
+  padding: 10px 22px;
+  border: none;
+  background: #c8102e;
+  color: white;
+  border-radius: 8px;
+  font-weight: 700;
+  transition: all 0.3s ease;
+}
+.register-btn:hover {
+  background: #a40d24;
+  transform: translateY(-2px);
+  box-shadow: 0 0 28px rgba(200,16,46,0.55);
+}
+
+@media (max-width: 900px) {
+  .navbar { flex-direction: column; gap: 14px; padding: 16px 5%; }
+  .nav-links { flex-wrap: wrap; justify-content: center; gap: 16px; }
+}
+@media (max-width: 600px) {
+  .nav-links { display: none; }
+  .nav-buttons { width: 100%; justify-content: center; }
+}
